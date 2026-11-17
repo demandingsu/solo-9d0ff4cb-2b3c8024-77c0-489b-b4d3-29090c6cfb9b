@@ -166,6 +166,27 @@ button.primary:disabled { background: #a8bcc5; cursor: not-allowed; }
 .badge-fresh { background: var(--ok-bg); color: var(--ok); border: 1px solid #b9e0c9; }
 .badge-stale { background: #eceff2; color: #5b6772; border: 1px solid #cfd8de; }
 .badge-warn { background: var(--warn-bg); color: var(--warn); border: 1px solid #f0d29b; }
+.badge-error { background: var(--error-bg); color: var(--error); border: 1px solid #f2c3c1; }
+
+.reconcile { margin-top: 12px; }
+.reconcile-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 10px;
+}
+.reconcile-title { font-weight: 600; font-size: 13.5px; margin: 6px 0; }
+.id-list {
+  margin: 4px 0 0;
+  padding: 8px 10px 8px 28px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.id-missing { background: var(--error-bg); border: 1px solid #f2c3c1; }
+.id-extra { background: var(--warn-bg); border: 1px solid #f0d29b; }
+.id-list li { margin: 2px 0; }
 
 .summary {
   display: flex;

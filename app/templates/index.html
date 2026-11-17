@@ -63,25 +63,102 @@
   </div>
 </section>
 
+<section class="card" id="manifest">
+  <h2>2. 送检清单（仅样本编号，整版替换）</h2>
+  <p class="hint">
+    化验室按送检清单交接成品批次。上传后页面比对<b>当前成品输入</b>与清单的编号集合：
+    清单有、成品没有的编号为<b>缺失（漏交）</b>，成品有、清单没有的编号为<b>额外（混入别批）</b>。
+    每次上传整版替换并生成新版本；空编号或重复编号将<b>整份拒收</b>。未上传清单时沿用原有计算方式。
+    CSV 须为 UTF-8，仅一列样本编号（表头任意），单个文件上限 {{ max_upload_mb }} MB。
+  </p>
+
+  <form method="post" action="/manifest/upload" enctype="multipart/form-data" class="upload-form">
+    <div class="upload-grid">
+      <label class="upload-box">
+        <span class="upload-title">清单 CSV（仅样本编号）</span>
+        <span class="upload-example">sample_id<br>S-1001<br>S-1002</span>
+        <input type="file" name="manifest_file" accept=".csv,text/csv">
+      </label>
+    </div>
+    <div class="actions">
+      <button type="submit" class="primary">上传并替换清单</button>
+      <span class="hint">只含一列编号；替换后旧报告立即标记为过期。</span>
+    </div>
+  </form>
+
+  {% set m = current.manifest %}
+  <div class="input-card" style="margin-top: 18px;">
+    <h3>当前清单</h3>
+    {% if m %}
+      <p class="meta">v{{ m.version }} · {{ m.filename or "未命名" }} · {{ m.created_at }} ·
+        <a href="/inputs/manifest/export.csv">导出</a></p>
+      <p class="meta">共 {{ m.count }} 个编号，前几个：{{ m.names|join("、") }}{% if m.count > m.names|length %} …{% endif %}</p>
+
+      {% if reconcile %}
+      <div class="reconcile">
+        {% if reconcile.matches %}
+          <span class="badge badge-fresh">编号集合一致，可发布报告</span>
+          <p class="meta">清单 {{ reconcile.manifest_count }} 个编号，成品 {{ reconcile.samples_count }} 个样本，无缺失、无额外。</p>
+        {% else %}
+          <span class="badge badge-error">编号集合不一致，已阻止发布报告</span>
+          <div class="reconcile-columns">
+            <div>
+              <p class="reconcile-title">缺失（清单有、成品没有）：{{ reconcile.missing|length }} 个</p>
+              {% if reconcile.missing %}
+              <ul class="id-list id-missing">
+                {% for value in reconcile.missing_display %}<li class="sample-id">{{ value }}</li>{% endfor %}
+              </ul>
+              {% if reconcile.missing_hidden %}<p class="hint">其余 {{ reconcile.missing_hidden }} 个见清单导出/API。</p>{% endif %}
+              {% else %}<p class="meta">无</p>{% endif %}
+            </div>
+            <div>
+              <p class="reconcile-title">额外（成品有、清单没有）：{{ reconcile.extra|length }} 个</p>
+              {% if reconcile.extra %}
+              <ul class="id-list id-extra">
+                {% for value in reconcile.extra_display %}<li class="sample-id">{{ value }}</li>{% endfor %}
+              </ul>
+              {% if reconcile.extra_hidden %}<p class="hint">其余 {{ reconcile.extra_hidden }} 个见成品导出/API。</p>{% endif %}
+              {% else %}<p class="meta">无</p>{% endif %}
+            </div>
+          </div>
+        {% endif %}
+      </div>
+      {% elif not current.samples %}
+      <p class="meta">成品输入尚未上传，上传后将自动比对缺失与额外编号。</p>
+      {% endif %}
+    {% else %}
+      <p class="empty">尚未上传清单 CSV；此时不做编号校验，沿用原有计算方式。</p>
+    {% endif %}
+  </div>
+</section>
+
 <section class="card" id="compute">
-  <h2>2. 计算占比</h2>
+  <h2>3. 计算占比</h2>
   <p class="hint">
     对每个样本，在“三项占比非负且总和为 1”的约束下最小化四项元素加权预测含量与实测值的
     平方误差和（SSE）。若存在多组同样最优的占比，报告只会标记<b>无法唯一确定</b>并给出
     各占比的可达区间，不会任取一组。
   </p>
+  {% if publish_blocked %}
+  <div class="notice notice-error">
+    当前成品与清单编号集合不一致（见上方缺失/额外清单），发布按钮已禁用；
+    请核对交接批次后重新上传成品或清单。
+  </div>
+  {% endif %}
   <form method="post" action="/compute">
-    <button type="submit" class="primary" {% if not current.baseline or not current.samples %}disabled{% endif %}>
+    <button type="submit" class="primary" {% if not current.baseline or not current.samples or publish_blocked %}disabled{% endif %}>
       基于当前输入计算并发布报告
     </button>
     {% if not current.baseline or not current.samples %}
     <span class="hint">需要先上传两类输入。</span>
+    {% elif publish_blocked %}
+    <span class="hint">编号集合与清单一致后才可发布。</span>
     {% endif %}
   </form>
 </section>
 
 <section class="card" id="report">
-  <h2>3. 报告</h2>
+  <h2>4. 报告</h2>
   {% if not report %}
     <p class="empty">尚无报告。上传输入后点击“计算”。</p>
   {% else %}
@@ -89,7 +166,8 @@
       <div>
         <span class="report-id">报告 #{{ report.id }}</span>
         <span class="meta">生成于 {{ report.created_at }} · 基准 v{{ report.baseline_version }} ·
-          成品 v{{ report.samples_version }}</span>
+          成品 v{{ report.samples_version }} ·
+          清单 {% if report.manifest_version %}v{{ report.manifest_version }}{% else %}未关联{% endif %}</span>
       </div>
       {% if report.stale %}
         <span class="badge badge-stale">已过期</span>
@@ -101,8 +179,9 @@
     {% if report.stale %}
     <div class="notice notice-warn">
       该报告对应的输入已被替换（基准{% if report.baseline_current %}一致{% else %}已更新{% endif %}，
-      成品{% if report.samples_current %}一致{% else %}已更新{% endif %}），
-      结果仅供参考。请重新计算以得到与当前输入一致的报告。
+      成品{% if report.samples_current %}一致{% else %}已更新{% endif %}，
+      清单{% if report.manifest_current is none %}报告未关联清单{% elif report.manifest_current %}一致{% else %}已更新/新启用{% endif %}），
+      结果仅供参考但仍可查看。请重新计算以得到与当前输入一致的报告。
     </div>
     {% endif %}
 

@@ -39,6 +39,8 @@ MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 # report serialisation.
 MAX_ADJUSTED_EXPONENT = 100
 MAX_SAMPLES = 2000
+# A manifest only carries identifiers, so a larger cap is cheap.
+MAX_MANIFEST_IDS = 10000
 ELEMENT_COUNT = 4
 ORE_COUNT = 3
 
@@ -103,6 +105,20 @@ class SamplesInput:
         )
 
 
+@dataclass(frozen=True)
+class ManifestInput:
+    """The handover manifest: an ordered list of sample identifiers only."""
+
+    sample_ids: tuple[str, ...]
+
+    def to_payload(self) -> dict:
+        return {"sample_ids": list(self.sample_ids)}
+
+    @classmethod
+    def from_payload(cls, payload: dict) -> "ManifestInput":
+        return cls(sample_ids=tuple(payload["sample_ids"]))
+
+
 def fraction_to_text(value: Fraction) -> str:
     if value.denominator == 1:
         return str(value.numerator)
@@ -148,7 +164,9 @@ def parse_content(raw: str, *, line_no: int, column: str) -> Fraction:
     return Fraction(decimal)
 
 
-def _read_rows(raw: bytes, label: str) -> list[tuple[int, list[str]]]:
+def _read_rows(
+    raw: bytes, label: str, *, skip_blank_rows: bool = True
+) -> list[tuple[int, list[str]]]:
     if not raw:
         raise InputValidationError(f"{label}文件为空")
     if len(raw) > MAX_UPLOAD_BYTES:
@@ -166,7 +184,9 @@ def _read_rows(raw: bytes, label: str) -> list[tuple[int, list[str]]]:
     try:
         reader = csv.reader(io.StringIO(text, newline=""))
         for line_no, row in enumerate(reader, start=1):
-            if not row or all(not cell.strip() for cell in row):
+            if skip_blank_rows and (
+                not row or all(not cell.strip() for cell in row)
+            ):
                 continue
             rows.append((line_no, row))
     except csv.Error as exc:
@@ -275,3 +295,50 @@ def parse_samples(raw: bytes) -> SamplesInput:
         sample_ids=tuple(sample_ids),
         rows=tuple(parsed_rows),
     )
+
+
+def parse_manifest(raw: bytes) -> ManifestInput:
+    """Parse a manifest CSV containing only sample identifiers.
+
+    Whole-file validation: an empty or duplicated identifier (or any other
+    structural problem) rejects the *entire* upload, so a manifest version
+    can never silently drop or merge a row.  The header line may name the
+    single column freely; every data row must have exactly one cell.
+    """
+
+    rows = _read_rows(raw, "清单", skip_blank_rows=False)
+    line_no, raw_header = rows[0]
+    if len(raw_header) != 1:
+        raise InputValidationError(
+            f"清单表头必须只有 1 列（样本编号），实际 {len(raw_header)} 列"
+        )
+    header = raw_header[0].strip()
+    if not header:
+        raise InputValidationError(f"第 {line_no} 行：清单表头不能为空")
+
+    sample_ids: list[str] = []
+    seen: set[str] = set()
+    for line_no, row in rows[1:]:
+        if not row or all(not cell.strip() for cell in row):
+            raise InputValidationError(f"第 {line_no} 行：样本编号不能为空")
+        if len(row) != 1:
+            raise InputValidationError(
+                f"第 {line_no} 行：清单每行只能有 1 列样本编号，实际 {len(row)} 列"
+            )
+        sample_id = row[0].strip()
+        if not sample_id:
+            raise InputValidationError(f"第 {line_no} 行：样本编号不能为空")
+        if sample_id in seen:
+            raise InputValidationError(
+                f"第 {line_no} 行：样本编号“{sample_id}”重复"
+            )
+        seen.add(sample_id)
+        sample_ids.append(sample_id)
+
+    if not sample_ids:
+        raise InputValidationError("清单文件没有数据行（至少需要一个样本编号）")
+    if len(sample_ids) > MAX_MANIFEST_IDS:
+        raise InputValidationError(
+            f"清单最多支持 {MAX_MANIFEST_IDS} 个样本编号，实际 {len(sample_ids)} 个"
+        )
+    return ManifestInput(sample_ids=tuple(sample_ids))
